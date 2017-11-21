@@ -1,33 +1,49 @@
 module Lib
     ( someFunc
+    , element
     ) where
 
-import Control.Applicative
+import           Control.Applicative
 import qualified Data.Attoparsec.Text as A
-import Data.Text
+import           Data.Text
 
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
 
 newtype Whitespace = Whitespace Text
-    deriving Show
+instance Show Whitespace where
+    show (Whitespace text) = unpack text
+
+data AttrValue =
+      SingleQuoted Text
+    | DoubleQuoted Text
+instance Show AttrValue where
+    show (SingleQuoted value) = "'" ++ unpack value ++ "'"
+    show (DoubleQuoted value) = "\"" ++ unpack value ++ "\""
+
 data Attribute = Attribute
     { attrLeadingWhitespace :: Whitespace
-    , attrName :: Text
-    , attrValue :: Text 
+    , attrName              :: Text
+    , attrValue             :: AttrValue
     } deriving Show
 data Element = Element
-    { elemLeadingWhitespace :: Whitespace
-    , elemName :: Text
-    , elemAttributes :: [Attribute]
+    { elemLeadingWhitespace      :: Whitespace
+    , elemName                   :: Text
+    , elemAttributes             :: [Attribute]
     , elemAttrTrailingWhitespace :: Whitespace
-    , elemBody :: ElementBody
+    , elemBody                   :: ElementBody
     } deriving Show
 data ElementBody = ElementBody
-    { bodyLeadingWhitespace :: Whitespace
-    , bodyElements :: [Element]
+    { bodyLeadingWhitespace  :: Whitespace
+    , bodyElements           :: [Element]
     , bodyTrailingWhitespace :: Whitespace
     } deriving Show
+
+noWhitespace :: Whitespace
+noWhitespace = Whitespace $ pack ""
+
+noElementBody :: ElementBody
+noElementBody = ElementBody noWhitespace [] noWhitespace
 
 whitespace :: A.Parser Whitespace
 whitespace = do
@@ -35,25 +51,23 @@ whitespace = do
     return (Whitespace text)
 
 name :: A.Parser Text
-name = do
-    name_ <- A.takeWhile1 $ A.inClass "-_a-zA-Z0-9"
-    return name_
+name = A.takeWhile1 $ A.inClass "-_a-zA-Z0-9"
 
-value :: A.Parser Text
+value :: A.Parser AttrValue
 value = valueSingle <|> valueDouble
     where
-        valueSingle :: A.Parser Text
+        valueSingle :: A.Parser AttrValue
         valueSingle = do
             A.char '\''
-            value_ <- A.takeWhile $ A.notInClass "\n\r"
+            value_ <- A.takeWhile $ A.notInClass "'\n\r"
             A.char '\''
-            return value_
-        valueDouble :: A.Parser Text
+            return $ SingleQuoted value_
+        valueDouble :: A.Parser AttrValue
         valueDouble = do
             A.char '"'
-            value_ <- A.takeWhile $ A.notInClass "\n\r"
+            value_ <- A.takeWhile $ A.notInClass "\"\n\r"
             A.char '"'
-            return value_
+            return $ DoubleQuoted value_
 
 attribute :: A.Parser Attribute
 attribute = do
@@ -70,13 +84,20 @@ element = do
     elemName <- name
     elemAttributes <- A.many' attribute
     elemAttrTrailingWhitespace <- whitespace
-    A.char '>'
-    elemBody <- elementBody
-    A.char '<'
-    A.char '/'
-    A.string elemName
-    A.char '>'
-    return $ Element elemLeadingWhitespace elemName elemAttributes elemAttrTrailingWhitespace elemBody
+    nextChar <- A.peekChar'
+    if nextChar == '/'
+        then do
+            A.char '/'
+            A.char '>'
+            return $ Element elemLeadingWhitespace elemName elemAttributes elemAttrTrailingWhitespace noElementBody
+        else do
+            A.char '>'
+            elemBody <- elementBody
+            A.char '<'
+            A.char '/'
+            A.string elemName
+            A.char '>'
+            return $ Element elemLeadingWhitespace elemName elemAttributes elemAttrTrailingWhitespace elemBody
 
 elementBody :: A.Parser ElementBody
 elementBody = do
@@ -84,4 +105,3 @@ elementBody = do
     bodyElements <- A.many' element
     bodyTrailingWhitespace <- whitespace
     return $ ElementBody bodyLeadingWhitespace bodyElements bodyTrailingWhitespace
-
